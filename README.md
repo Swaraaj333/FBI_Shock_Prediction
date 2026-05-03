@@ -7,7 +7,7 @@
 
 A machine learning application designed to predict **future Hemodynamic Shock risk** in ICU patients 1-2 hours before it happens. Built using real MIMIC-IV hospital data!
 
-*(Drop a cool screenshot of your Streamlit UI here!)*
+
 <!-- ![UI Screenshot](path/to/your/screenshot.png) -->
 
 ---
