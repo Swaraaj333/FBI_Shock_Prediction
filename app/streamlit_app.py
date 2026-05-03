@@ -19,10 +19,12 @@ Usage:
 import streamlit as st
 import pandas as pd
 import numpy as np
-import requests
 import plotly.graph_objects as go
 import plotly.express as px
 import time
+import os
+import joblib
+import traceback
 
 # ── Page Config ──────────────────────────────────────────
 
@@ -156,48 +158,118 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ── Constants ────────────────────────────────────────────
-# The Flask API must be running separately on this address.
-API_URL = "http://localhost:5000"
+# ── Model Logic ──────────────────────────────────────────
 
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MODEL_DIR = os.path.join(BASE_DIR, "model")
 
-# ── Helper Functions ─────────────────────────────────────
+@st.cache_resource
+def load_ml_model():
+    """Load the serialized model and feature list from disk."""
+    model_path = os.path.join(MODEL_DIR, "shock_rf_model.pkl")
+    features_path = os.path.join(MODEL_DIR, "feature_names.pkl")
 
-def check_api():
-    """Quick health probe — shown as a status indicator in the sidebar."""
-    try:
-        r = requests.get(f"{API_URL}/health", timeout=3)
-        return r.status_code == 200
-    except:
-        return False
+    if not all(os.path.exists(p) for p in [model_path, features_path]):
+        return None, None
 
+    model = joblib.load(model_path)
+    feature_names = joblib.load(features_path)
+    return model, feature_names
+
+# Load model at startup
+MODEL, FEATURE_NAMES = load_ml_model()
+
+def prepare_input(data_dict):
+    """Normalize and enrich a single row of vitals for model input."""
+    row = {}
+    field_map = {
+        "HeartRate": "HeartRate", "heart_rate": "HeartRate", "hr": "HeartRate",
+        "SysBP": "SysBP", "sys_bp": "SysBP", "systolic_bp": "SysBP",
+        "MAP": "MAP", "map": "MAP", "mean_arterial_pressure": "MAP",
+        "RespRate": "RespRate", "resp_rate": "RespRate", "respiratory_rate": "RespRate",
+        "SpO2": "SpO2", "spo2": "SpO2", "oxygen_saturation": "SpO2",
+        "Age": "Age", "age": "Age", "Gender_M": "Gender_M", "gender_m": "Gender_M",
+        "ShockIndex": "ShockIndex", "shock_index": "ShockIndex",
+        "HR_Change": "HR_Change", "SysBP_Change": "SysBP_Change",
+        "MAP_Change": "MAP_Change", "SpO2_Change": "SpO2_Change",
+    }
+
+    for key, val in data_dict.items():
+        mapped = field_map.get(key, key)
+        if mapped in FEATURE_NAMES:
+            try:
+                row[mapped] = float(val) if val is not None and val != "" else np.nan
+            except (ValueError, TypeError):
+                row[mapped] = np.nan
+
+    if "ShockIndex" not in row or np.isnan(row.get("ShockIndex", np.nan)):
+        hr, sbp = row.get("HeartRate", np.nan), row.get("SysBP", np.nan)
+        if not np.isnan(hr) and not np.isnan(sbp) and sbp > 0:
+            row["ShockIndex"] = round(hr / sbp, 3)
+
+    for feat in FEATURE_NAMES:
+        if feat not in row: row[feat] = np.nan
+    return row
 
 def predict_vitals(vitals_dict):
-    """POST a single set of vitals to the /predict endpoint."""
+    """Run inference locally."""
+    if MODEL is None: return {"error": "Model not loaded"}
     try:
-        r = requests.post(f"{API_URL}/predict", json=vitals_dict, timeout=10)
-        if r.status_code == 200:
-            return r.json()
-        else:
-            return {"error": f"API returned status {r.status_code}"}
-    except requests.exceptions.ConnectionError:
-        return {"error": "Cannot connect to API. Make sure flask_api.py is running."}
+        prepared = prepare_input(vitals_dict)
+        df = pd.DataFrame([prepared])[FEATURE_NAMES]
+        prediction = int(MODEL.predict(df)[0])
+        probabilities = MODEL.predict_proba(df)[0]
+
+        return {
+            "prediction": prediction,
+            "label": "SHOCK" if prediction == 1 else "STABLE",
+            "confidence": round(float(max(probabilities)) * 100, 1),
+            "prob_stable": round(float(probabilities[0]) * 100, 1),
+            "prob_shock": round(float(probabilities[1]) * 100, 1),
+            "shock_index": prepared.get("ShockIndex"),
+        }
     except Exception as e:
         return {"error": str(e)}
 
-
 def predict_csv(file):
-    """Upload a CSV to /predict_csv for batch timeline analysis."""
+    """Process a CSV file locally with full temporal feature engineering."""
+    if MODEL is None: return {"error": "Model not loaded"}
     try:
-        files = {"file": (file.name, file, "text/csv")}
-        r = requests.post(f"{API_URL}/predict_csv", files=files, timeout=60)
-        if r.status_code == 200:
-            return r.json()
+        df = pd.read_csv(file)
+        vitals_cols = [c for c in df.columns if c not in ['stay_id', 'subject_id', 'charttime']]
+        
+        # Temporal Preprocessing (Forward-fill and Change Features)
+        if "stay_id" in df.columns:
+            df[vitals_cols] = df.groupby("stay_id")[vitals_cols].ffill(limit=2)
         else:
-            return {"error": f"API returned status {r.status_code}: {r.text}"}
-    except requests.exceptions.ConnectionError:
-        return {"error": "Cannot connect to API. Make sure flask_api.py is running."}
+            df[vitals_cols] = df[vitals_cols].ffill(limit=2)
+
+        if 'HeartRate' in df.columns and 'SysBP' in df.columns:
+            df['ShockIndex'] = np.where((df['SysBP'].notna()) & (df['SysBP'] > 0), 
+                                       np.round(df['HeartRate'] / df['SysBP'], 3), np.nan)
+
+        change_map = {'HeartRate': 'HR_Change', 'SysBP': 'SysBP_Change', 'MAP': 'MAP_Change', 'SpO2': 'SpO2_Change'}
+        for col, change_col in change_map.items():
+            if col in df.columns:
+                df[change_col] = df.groupby('stay_id')[col].diff() if 'stay_id' in df.columns else df[col].diff()
+
+        results = []
+        for idx, row in df.iterrows():
+            pred = predict_vitals(row.to_dict())
+            pred["row_index"] = idx
+            results.append(pred)
+
+        n_shock = sum(1 for r in results if r["prediction"] == 1)
+        return {
+            "total_rows": len(results),
+            "shock_count": n_shock,
+            "stable_count": len(results) - n_shock,
+            "shock_percentage": round(n_shock / len(results) * 100, 1) if results else 0,
+            "patient_status": "CRITICAL_RISK" if n_shock > 0 else "STABLE",
+            "predictions": results,
+        }
     except Exception as e:
+        traceback.print_exc()
         return {"error": str(e)}
 
 
@@ -268,12 +340,11 @@ with st.sidebar:
     st.markdown("## Shock Predictor")
     st.markdown("---")
 
-    # API Status
-    api_status = check_api()
-    if api_status:
-        st.success("API Connected")
+    # Model Status
+    if MODEL is not None:
+        st.success("ML Model Loaded")
     else:
-        st.error("API Offline - Start flask_api.py")
+        st.error("ML Model Missing")
 
     st.markdown("---")
 
@@ -356,8 +427,8 @@ with tab1:
                   delta_color="inverse" if shock_index > 1.0 else "normal")
 
     if predict_btn:
-        if not api_status:
-            st.error("Flask API is not running! Start it with: `python flask_api.py`")
+        if MODEL is None:
+            st.error("ML Model is not loaded! Check 'model/' folder.")
         else:
             vitals = {
                 "HeartRate": heart_rate,
@@ -496,8 +567,8 @@ with tab2:
         st.dataframe(preview_df.head(10), use_container_width=True)
 
         if st.button("Run Predictions", type="primary", key="csv_predict"):
-            if not api_status:
-                st.error("Flask API is not running! Start it with: `python flask_api.py`")
+            if MODEL is None:
+                st.error("ML Model is not loaded! Check 'model/' folder.")
             else:
                 with st.spinner(f"Processing {len(preview_df)} rows..."):
                     result = predict_csv(uploaded_file)
