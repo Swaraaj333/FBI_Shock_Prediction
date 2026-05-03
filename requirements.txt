@@ -7,6 +7,5 @@ scikit-learn
 joblib
 plotly
 requests
-gunicorn
 pytest
 pytest-flask

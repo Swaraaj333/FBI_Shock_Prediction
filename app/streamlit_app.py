@@ -23,7 +23,6 @@ import requests
 import plotly.graph_objects as go
 import plotly.express as px
 import time
-import os
 
 # ── Page Config ──────────────────────────────────────────
 
@@ -159,7 +158,7 @@ st.markdown("""
 
 # ── Constants ────────────────────────────────────────────
 # The Flask API must be running separately on this address.
-API_URL = os.environ.get("API_URL", "http://localhost:5000")
+API_URL = "http://localhost:5000"
 
 
 # ── Helper Functions ─────────────────────────────────────
@@ -578,7 +577,7 @@ with tab3:
     st.markdown("### Explore Processed MIMIC-IV Data")
 
     # This path is relative to where streamlit is invoked from (project root)
-    data_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "processed_mimic.csv")
+    data_path = "data/processed_mimic.csv"
     try:
         df = pd.read_csv(data_path)
 
