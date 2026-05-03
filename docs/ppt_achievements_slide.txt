@@ -1,0 +1,19 @@
+Key Achievements of the Model
+
+1. Translational Emphasis: Identified future shock events with an overall accuracy of ~78% and a high stable-state recall of 89%. The prediction horizon (up to 8 hours, as proven in complex test cases) is designed to provide actionable lead time for clinicians.
+
+2. Broad clinical applicability by design. The model is designed to leverage the broad utility of the Shock Index, calculating it dynamically to serve as an early indicator of cardiovascular deterioration.
+
+3. Monitor-only early prediction of Hemodynamic Shock (1-8 hours lead time) from routinely available, non-invasive ICU vital signs (Heart Rate, Systolic BP, MAP, Resp Rate, SpO2).
+
+4. Real-world development and evaluation, using the MIMIC-IV clinical database (representing highly diverse ICU patient stays) for robust model training, feature engineering, and validation.
+
+5. Robustness to Clinical Sparsity and sensor disconnections, demonstrating the ability to maintain predictive accuracy during periods of missing data:
+   a. Utilized Last-Observation-Carried-Forward (LOCF) for temporal imputation.
+   b. Demonstrated success on 'sudden crash' and 'missing data' external test cohorts.
+
+6. Eradication of Target Leakage via temporal target shifting, ensuring the algorithm forecasts future deterioration rather than merely diagnosing current, obvious distress.
+
+7. Mechanistically interpretable signatures of deterioration, supported by correlation analyses identifying physiologically accurate markers (e.g., strong negative correlation with declining Mean Arterial Pressure).
+
+8. Release of an end-to-end Clinical Decision Support System (CDSS), integrating a robust Flask Inference API with a fully interactive Streamlit frontend for batch processing and real-time bedside triage.

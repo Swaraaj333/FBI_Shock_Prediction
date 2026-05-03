@@ -1,0 +1,22 @@
+services:
+  # Flask API Backend
+  - type: web
+    name: shock-predictor-api
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app.flask_api:app --bind 0.0.0.0:$PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+
+  # Streamlit Frontend
+  - type: web
+    name: shock-predictor-ui
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app/streamlit_app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+      - key: API_URL
+        value: https://shock-predictor-api.onrender.com
